@@ -1,0 +1,22 @@
+# Edge Controller Dependencies
+
+# Hardware Interface
+pyserial>=3.5
+lgpio>=0.2.2
+
+# Database
+sqlite3-python
+
+# HTTP Client
+httpx>=0.25.0
+
+# Configuration
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Logging
+structlog>=23.0.0
+
+# Web server (for health checks)
+fastapi>=0.104.0
+uvicorn>=0.24.0

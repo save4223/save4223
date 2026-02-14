@@ -1,0 +1,68 @@
+# Edge Device Docker Composition (Raspberry Pi)
+# Smart Lab Inventory System - Hardware Controller
+
+version: '3.8'
+
+services:
+  pi-controller:
+    build:
+      context: ./controller
+      dockerfile: Dockerfile
+    container_name: inventory_edge_controller
+    restart: always
+    
+    # Hardware access (RFID reader via USB Serial, GPIO)
+    privileged: true
+    # For better security, use specific device mapping instead of privileged:
+    # devices:
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"
+    #   - "/dev/gpiomem:/dev/gpiomem"
+    
+    volumes:
+      # Persist local SQLite cache across container restarts
+      - ./local_data:/app/data
+      # Optional: Mount config file
+      - ./config:/app/config:ro
+    
+    environment:
+      # Server connection (update with your server IP)
+      - SERVER_URL=http://100.83.123.68:3000
+      - CABINET_ID=CABINET_01
+      - API_SECRET=edge_device_secret_key
+      
+      # Sync intervals
+      - SYNC_INTERVAL_MS=5000
+      - HEARTBEAT_INTERVAL_MS=300000  # 5 minutes
+      
+      # Hardware settings
+      - RFID_PORT=/dev/ttyUSB0
+      - RFID_BAUDRATE=115200
+      - GPIO_LOCK_PIN=18
+      - GPIO_DOOR_SENSOR_PIN=23
+      
+      # Filter algorithm settings
+      - VOTING_ROUNDS=10
+      - VOTING_DURATION_MS=2000
+      - VOTING_THRESHOLD=0.8
+      - RSSI_THRESHOLD=-75
+      
+      # Logging
+      - LOG_LEVEL=INFO
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    ports:
+      # Local debug interface
+      - "8080:8080"
+
+# Optional: Local MQTT broker for hardware event streaming
+#   mqtt:
+#     image: eclipse-mosquitto:2
+#     ports:
+#       - "1883:1883"
+#       - "9001:9001"
