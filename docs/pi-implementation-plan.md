@@ -19,22 +19,28 @@ This document outlines the implementation plan for the Raspberry Pi-based smart 
 │                            ▼                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │                 State Machine Controller                 ││
-│  │  ┌─────────┐    ┌─────────┐    ┌─────────┐            ││
-│  │  │ LOCKED  │───▶│UNLOCKED │───▶│SCANNING │            ││
-│  │  └────▲────┘    └────┬────┘    └────┬────┘            ││
-│  │       └────────────────┴──────────────┘                 ││
 │  └─────────────────────────────────────────────────────────┘│
 │                            │                                 │
-│         ┌──────────────────┼──────────────────┐              │
-│         ▼                  ▼                  ▼              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │  Local Auth  │  │  Local DB    │  │  API Client  │      │
-│  │   (Cache)    │  │  (SQLite)    │  │  (Sync)      │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-│                                                       │      │
-└───────────────────────────────────────────────────────┼──────┘
-                                                        │
-                              ┌─────────────────────────┘
+│  ┌─────────────────────────┼──────────────────────────────┐ │
+│  │                         ▼                              │ │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │ │
+│  │  │  Local DB   │  │  API Client │  │   Display   │◀──┼─┼──┐
+│  │  │  (SQLite)   │  │   (Sync)    │  │  (Electron/ │   │ │  │
+│  │  └─────────────┘  └─────────────┘  │   Browser)   │   │ │  │
+│  │                                     └─────────────┘   │ │  │
+│  │                                                       │ │  │
+│  │  ┌─────────────────────────────────────────────────┐  │ │  │
+│  │  │     LOCAL DASHBOARD (Real-time Display)         │  │ │  │
+│  │  │  • Shows welcome/instructions when idle         │  │ │  │
+│  │  │  • Shows user info when authenticated           │  │ │  │
+│  │  │  • Shows item summary after checkout            │  │ │  │
+│  │  │  • Updates via WebSocket from main process      │  │ │  │
+│  │  └─────────────────────────────────────────────────┘◀─┘ │  │
+│  └────────────────────────────────────────────────────────┘   │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+                              │
+                              │ WebSocket / HTTP
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Save4223 Cloud API                        │
@@ -176,12 +182,20 @@ save4223-pi/
 │   ├── local_auth.py           # Local authentication cache
 │   ├── sync_worker.py          # Background sync thread
 │   ├── transaction_processor.py # RFID diff calculator
+│   ├── display_manager.py      # Display/WebSocket manager
 │   └── hardware/
 │       ├── __init__.py
 │       ├── controller.py       # GPIO, servos, LEDs
 │       ├── nfc_reader.py       # NFC card reader
 │       ├── qr_scanner.py       # QR code scanner
 │       └── rfid_reader.py      # RFID tag reader
+├── display/                    # Local Dashboard (Electron/Web)
+│   ├── package.json
+│   ├── main.js                 # Electron main process
+│   ├── preload.js              # Electron preload script
+│   ├── index.html              # Main HTML
+│   ├── styles.css              # Dashboard styles
+│   └── renderer.js             # Dashboard UI logic
 ├── data/
 │   ├── local.db                # SQLite database
 │   └── tag_mapping.json        # RFID to item mapping
@@ -192,6 +206,99 @@ save4223-pi/
 ├── requirements.txt
 ├── config.json                 # Runtime configuration
 └── README.md
+```
+
+## Local Dashboard (Real-time Display)
+
+The Pi runs a local dashboard display on its connected monitor, providing real-time feedback to users without network latency.
+
+### Why Local Dashboard?
+
+- **Zero Latency**: Updates instantly vs. cloud round-trip
+- **Offline Resilient**: Works without internet connection
+- **Lower Cost**: No server resources needed for display
+- **Better UX**: Immediate visual feedback for card taps
+
+### Dashboard States
+
+| State | Display Content | Trigger |
+|-------|-----------------|---------|
+| **IDLE** | Welcome screen, registration instructions | Cabinet locked, no user |
+| **AUTHENTICATING** | "Please wait..." spinner | Card/QR detected |
+| **AUTHENTICATED** | User name, session instructions, countdown | Auth successful |
+| **CHECKOUT** | Item summary (borrowed/returned) | Session completed |
+
+### Communication Architecture
+
+```
+┌──────────────┐     WebSocket      ┌──────────────┐
+│  Main Process │ ◀────────────────▶ │   Display    │
+│  (Python)     │   State Updates    │ (Electron)   │
+└──────────────┘                    └──────────────┘
+       │                                     │
+       │ SQLite Events                       │ Render UI
+       ▼                                     ▼
+┌──────────────┐                    ┌──────────────┐
+│  Local DB    │                    │   Monitor    │
+│  (SQLite)    │                    │  (HDMI/DSI)  │
+└──────────────┘                    └──────────────┘
+```
+
+### Implementation Options
+
+**Option 1: Electron App (Recommended)**
+- Full desktop app with Node.js backend
+- Direct WebSocket to main Python process
+- Easy to style with modern CSS
+- Can run in kiosk mode
+
+**Option 2: Web Browser + Local Server**
+- Python Flask/FastAPI serves web page
+- Browser runs in fullscreen/kiosk mode
+- Simpler stack, easier to debug
+
+**Option 3: PyQt/PySide GUI**
+- Native Python GUI
+- No JavaScript/Web stack
+- Harder to style, less flexible
+
+### Recommended: Electron Approach
+
+```javascript
+// Main process (Node.js)
+const { WebSocket } = require('ws');
+const ws = new WebSocket('ws://localhost:8765');
+
+ws.on('message', (data) => {
+  const event = JSON.parse(data);
+  // Update window with new state
+  mainWindow.webContents.send('state-update', event);
+});
+
+// Renderer process (UI)
+ipcRenderer.on('state-update', (event, data) => {
+  updateDashboard(data);
+});
+```
+
+### WebSocket Protocol
+
+```typescript
+interface StateUpdate {
+  type: 'STATE_CHANGE' | 'AUTH_SUCCESS' | 'AUTH_FAILURE' | 
+         'ITEM_SUMMARY' | 'ERROR';
+  state: 'LOCKED' | 'AUTHENTICATING' | 'UNLOCKED' | 'SCANNING';
+  user?: {
+    id: string;
+    email: string;
+    full_name?: string;
+  };
+  itemSummary?: {
+    borrowed: Array<{tag: string, name: string}>;
+    returned: Array<{tag: string, name: string}>;
+  };
+  error?: string;
+}
 ```
 
 ## Implementation Phases
@@ -226,7 +333,15 @@ save4223-pi/
 3. Conflict resolution
 4. Data persistence
 
-### Phase 6: Testing & Polish (Week 4)
+### Phase 6: Local Dashboard (Week 4-5)
+1. Set up Electron app structure
+2. Create WebSocket server in main process
+3. Build dashboard UI components
+4. Implement state update protocol
+5. Add kiosk mode for production
+6. Style with DaisyUI/theme matching
+
+### Phase 7: Testing & Polish (Week 5-6)
 1. End-to-end testing
 2. Error handling
 3. Performance optimization
