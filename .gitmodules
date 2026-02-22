@@ -1,3 +1,6 @@
 [submodule "server"]
 	path = server
 	url = https://github.com/save4223/save4223server.git
+[submodule "cabinet-pi"]
+	path = cabinet-pi
+	url = https://github.com/save4223/save4223-cabinet-pi.git
