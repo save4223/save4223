@@ -1,2 +1,4 @@
 # Claude Code development file
 CLAUDE.md
+
+./src/*.pyc
