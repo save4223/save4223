@@ -102,14 +102,15 @@ CREATE TABLE item_types (
   name varchar(100) NOT NULL,
   category varchar(50), -- 'TOOL', 'CONSUMABLE', 'DEVICE'
   description text,
-  
+
   -- [NEW] Object Storage Reference
-  image_url text, 
-  
+  image_url text,
+
   -- [NEW] Default Borrow Rules
-  max_borrow_duration interval DEFAULT '7 days', 
-  
-  total_quantity integer DEFAULT 0,
+  max_borrow_duration interval DEFAULT '7 days',
+
+  -- Note: total_quantity is computed dynamically from items table
+  -- Use: SELECT COUNT(*) FROM items WHERE item_type_id = ? AND status != 'MISSING'
   created_at timestamptz DEFAULT now()
 );
 
